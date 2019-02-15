@@ -11,7 +11,7 @@ import numpy.random as nr
 
 class OUNoise:
     """docstring for OUNoise"""
-    def __init__(self, action_dimension, mu=0, theta=0.3, sigma=0.03, weight_decay=0.9999):
+    def __init__(self, action_dimension, mu=0.5, theta=0.4, sigma=0.2, weight_decay=0.9999):
         self.action_dimension = action_dimension
         self.mu = mu
         self.theta = theta

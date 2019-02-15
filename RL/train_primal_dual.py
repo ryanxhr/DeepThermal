@@ -7,28 +7,26 @@ from RL.env import *
 
 
 MAX_EPISODES = 30000
-MAX_EP_STEPS = 30
-TEST = 10
-SIM_REAL_RATIO = 3
+MAX_EP_STEPS = 10
+# TEST = 10
+SIM_REAL_RATIO = 1
 
-
-# if episode = ADJ_EPISODES, dual = dual_off
-ADJ_EPISODES = 5  # {1, 5, 10}
 
 
 class input_config():
-    batch_size = 1024
+    batch_size = 32
     init_dual_lambda = 1
     state_dim = 58
     action_dim = 51
     clip_norm = 5.
     train_display_iter = 200
-    model_save_path = './model/'
-    model_name = "sim_ddpg"
-    logdir = './logs/{}-{}-{}-{:.2f}/'.format(
-        model_name, MAX_EP_STEPS, SIM_REAL_RATIO, init_dual_lambda)
-    log_path = logdir + 'saved_models/'
-    save_iter = 100
+    model_save_path = './models/'
+    # model_name = "sim_ddpg"
+    # logdir = './logs/{}-{}-{}-{:.2f}/'.format(
+    #     model_name, MAX_EP_STEPS, SIM_REAL_RATIO, init_dual_lambda)
+    # log_path = logdir + 'saved_models/'
+    log_path = "logs/nonpre_nonexp_" + str(SIM_REAL_RATIO) + "_pdddpg_summary"
+    save_iter = 500
     log_iter = 100
 
 
@@ -46,14 +44,13 @@ def pre_train_actor_network(agent, epochs=3):
 
         # display
         if epoch % 1 == 0:
-            print('-----------------pretrain actor network-----------------')
+            print('-----------------pre-train actor network-----------------')
             print('epoch = {} mse = {:.4f}'.format(epoch, mse))
 
 
-def pre_train_reward_critic_network(agent, times=3):
-
+def pre_train_reward_critic_network(agent, epochs=3):
     replay_buffer = agent.replay_buffer
-    for train_times in range(times):
+    for train_times in range(epochs):
         step = 0
         while step < 1000:
             minibatch = replay_buffer.get_real_batch(batch_size=input_config.batch_size)
@@ -69,20 +66,18 @@ def pre_train_reward_critic_network(agent, times=3):
                 y_batch.append(reward_batch[i] + agent.gamma * target_value[i])
 
             # update critic network
-            reward_critic_loss, reward_action_grad_norm = agent.reward_critic_network.train(y_batch, state_batch, action_batch)
+            reward_critic_loss = agent.reward_critic_network.pretrain(y_batch, state_batch, action_batch)
 
         # display
         if train_times % 1 == 0:
             print('-----------------pre-train reward critic network-----------------')
-            print("reward_critic: loss:{:.3f} action_grads_norm:{:.3f} ".format(
-                reward_critic_loss, np.mean(reward_action_grad_norm)))
+            print("reward_critic: loss:{:.3f}".format(reward_critic_loss))
 
 
-def pre_train_cost_critic_network(agent, times=3):
-
+def pre_train_cost_critic_network(agent, epochs=3):
     replay_buffer = agent.replay_buffer
     step = 0
-    for train_times in range(times):
+    for train_times in range(epochs):
         step = 0
         while step < 1000:
             minibatch = replay_buffer.get_real_batch(batch_size=input_config.batch_size)
@@ -98,18 +93,17 @@ def pre_train_cost_critic_network(agent, times=3):
                 z_batch.append(cost_batch[i] + agent.gamma * target_value[i])
 
             # update critic network
-            cost_critic_loss, cost_action_grad_norm = agent.cost_critic_network.train(z_batch, state_batch, action_batch)
+            cost_critic_loss = agent.cost_critic_network.pretrain(z_batch, state_batch, action_batch)
 
         # display
         if train_times % 1 == 0:
             print('-----------------pre-train cost critic network-----------------')
-            print("reward_critic: loss:{:.3f} action_grads_norm:{:.3f} ".format(
-                cost_critic_loss, np.mean(cost_action_grad_norm)))
+            print("reward_critic: loss:{:.3f}".format(cost_critic_loss))
 
 
 def main():
     # Set up summary writer
-    summary_writer = tf.summary.FileWriter("result/pre_exp_5_pdddpg_summary")
+    summary_writer = tf.summary.FileWriter(input_config.log_path)
 
     config = tf.ConfigProto(allow_soft_placement=True, log_device_placement=False)
     config.gpu_options.allow_growth = True
@@ -119,7 +113,7 @@ def main():
     agent_graph = tf.Graph()
     agent_sess = tf.Session(config=config, graph=agent_graph)
     with agent_graph.as_default():
-        agent = PrimalDualDDPG(sess=agent_sess, input_config=input_config, is_batch_norm=False)
+        agent = PrimalDualDDPG(sess=agent_sess, input_config=input_config, is_batch_norm=False, summ_writer=summary_writer)
         total_parameters = 0
         for variable in tf.trainable_variables():
             # shape is an array of tf.Dimension
@@ -141,12 +135,12 @@ def main():
         env = SimulatorEnvironment(sess=env_sess)
 
     # pre_train
-    pre_train_actor_network(agent=agent)
-    pre_train_reward_critic_network(agent=agent)
-    pre_train_cost_critic_network(agent=agent)
-    agent.actor_network.update_target()
-    agent.reward_critic_network.update_target()
-    agent.cost_critic_network.update_target()
+    # pre_train_actor_network(agent=agent, epochs=1)
+    # pre_train_reward_critic_network(agent=agent, epochs=1)
+    # pre_train_cost_critic_network(agent=agent, epochs=1)
+    # agent.actor_network.update_target()
+    # agent.reward_critic_network.update_target()
+    # agent.cost_critic_network.update_target()
 
     for episode in range(MAX_EPISODES):
         dual_variable = input_config.init_dual_lambda
@@ -155,7 +149,8 @@ def main():
         state = env.reset()
 
         for step in range(MAX_EP_STEPS):
-            action = restrictive_action(agent.action(state), episode)
+            # action = restrictive_action(agent.action(state), episode)
+            action = agent.noise_action(state, episode)
             next_state, reward, cost, done = env.step(action)
             ep_reward += reward
             ep_cost += cost

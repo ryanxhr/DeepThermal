@@ -5,9 +5,9 @@ import math
 
 LAYER1_SIZE = 256
 LAYER2_SIZE = 256
-LEARNING_RATE = 0.001
+LEARNING_RATE = 0.0001
 TAU = 0.001
-L2 = 0.001
+L2 = 0.0001
 
 
 def weight_variable(shape):
@@ -21,12 +21,17 @@ def bias_variable(shape):
 
 
 class RewardCriticNetwork(object):
-    def __init__(self, sess, input_config):
+    def __init__(self, sess, input_config, summ_writer):
         self.time_step = 0
         self.sess = sess
         self.state_dim = input_config.state_dim
         self.action_dim = input_config.action_dim
         self.clip_norm = input_config.clip_norm
+        self.step = 0
+        self.log_iter = input_config.log_iter  # logging interval in training phase
+        self.log_path = input_config.log_path  # logging interval in training phase
+
+        self.train_writer = summ_writer
 
         # create reward network
         self.state_input, \
@@ -53,6 +58,7 @@ class RewardCriticNetwork(object):
         self.cost = tf.reduce_mean(tf.square(self.y_input - self.reward_value_output)) + weight_decay
         self.optimizer = tf.train.AdamOptimizer(LEARNING_RATE).minimize(self.cost)
         self.action_gradients = tf.gradients(self.reward_value_output, self.action_input)
+
 
     # def create_reward_network(self, state_dim, action_dim):
     #     # the layer size could be changed
@@ -123,6 +129,9 @@ class RewardCriticNetwork(object):
         self.sess.run(self.target_update)
 
     def train(self, y_batch, state_batch, action_batch):
+        # r_loss_summ = tf.summary.scalar('reward_critic_loss', self.cost)
+        # self.merged = tf.summary.merge([r_loss_summ])
+
         train_feed_dict = {
             self.y_input: y_batch,
             self.state_input: state_batch,
@@ -130,7 +139,22 @@ class RewardCriticNetwork(object):
         }
         _, reward_critic_loss, reward_action_grad_norm = \
             self.sess.run([self.optimizer, self.cost, self.action_gradients], train_feed_dict)
+
+        # if self.step % self.log_iter == 0:
+        #     self.train_writer.add_summary(merged_summ, global_step=self.step)
+
+        self.step += 1
+
         return reward_critic_loss, reward_action_grad_norm
+
+    def pretrain(self, y_batch, state_batch, action_batch):
+        train_feed_dict = {
+            self.y_input: y_batch,
+            self.state_input: state_batch,
+            self.action_input: action_batch
+        }
+        _, reward_critic_loss = self.sess.run([self.optimizer, self.cost], train_feed_dict)
+        return reward_critic_loss
 
     def gradients(self, state_batch, action_batch):
         return self.sess.run(self.action_gradients, feed_dict={

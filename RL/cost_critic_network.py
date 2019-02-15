@@ -5,9 +5,9 @@ import math
 
 LAYER1_SIZE = 256
 LAYER2_SIZE = 256
-LEARNING_RATE = 0.001
+LEARNING_RATE = 0.0001
 TAU = 0.001
-L2 = 0.001
+L2 = 0.0001
 
 
 def weight_variable(shape):
@@ -21,24 +21,30 @@ def bias_variable(shape):
 
 
 class CostCriticNetwork(object):
-    def __init__(self, sess, input_config):
+    def __init__(self, sess, input_config, summ_writer):
         self.time_step = 0
         self.sess = sess
         self.state_dim = input_config.state_dim
         self.action_dim = input_config.action_dim
         self.clip_norm = input_config.clip_norm
+        self.step = 0
+        self.log_iter = input_config.log_iter  # logging interval in training phase
+        self.log_path = input_config.log_path  # logging interval in training phase
+
+        self.train_writer_cost = summ_writer
+
 
         # create cost network
         self.state_input, \
         self.action_input, \
         self.cost_value_output, \
-        self.net = self.create_cost_network(self.state_dim, self.action_dim)
+        self.cost_net = self.create_cost_network(self.state_dim, self.action_dim)
 
         # create target cost network (the same structure with cost network)
         self.target_state_input, \
         self.target_action_input, \
         self.target_cost_value_output, \
-        self.target_update = self.create_target_cost_network(self.state_dim, self.action_dim, self.net)
+        self.cost_target_update = self.create_target_cost_network(self.state_dim, self.action_dim, self.cost_net)
 
         self.create_training_method()
 
@@ -50,10 +56,12 @@ class CostCriticNetwork(object):
     def create_training_method(self):
         # Define training optimizer
         self.z_input = tf.placeholder("float", [None, 1])
-        weight_decay = tf.add_n([L2 * tf.nn.l2_loss(var) for var in self.net])
-        self.cost = tf.reduce_mean(tf.square(self.z_input - self.cost_value_output)) + weight_decay
-        self.optimizer = tf.train.AdamOptimizer(LEARNING_RATE).minimize(self.cost)
-        self.action_gradients = tf.gradients(self.cost_value_output, self.action_input)
+        weight_decay = tf.add_n([L2 * tf.nn.l2_loss(var) for var in self.cost_net])
+        self.cost_cost = tf.reduce_mean(tf.square(self.z_input - self.cost_value_output)) + weight_decay
+        self.optimizer = tf.train.AdamOptimizer(LEARNING_RATE).minimize(self.cost_cost)
+        self.action_gradients_cost = tf.gradients(self.cost_value_output, self.action_input)
+
+
 
     # def create_cost_network(self, state_dim, action_dim):
     #     # the layer size could be changed
@@ -121,20 +129,38 @@ class CostCriticNetwork(object):
         return state_input, action_input, cost_value_output, target_update
 
     def update_target(self):
-        self.sess.run(self.target_update)
+        self.sess.run(self.cost_target_update)
 
     def train(self, z_batch, state_batch, action_batch):
+        # c_loss_summ = tf.summary.scalar('cost_critic_loss', self.cost_cost)
+        # self.merged_cost = tf.summary.merge([c_loss_summ])
+
         train_feed_dict = {
             self.z_input: z_batch,
             self.state_input: state_batch,
             self.action_input: action_batch
         }
         _, cost_critic_loss, cost_action_grad_norm = \
-            self.sess.run([self.optimizer, self.cost, self.action_gradients], train_feed_dict)
+            self.sess.run([self.optimizer, self.cost_cost, self.action_gradients_cost], train_feed_dict)
+
+        # if self.step % self.log_iter == 0:
+        #     self.train_writer_cost.add_summary(merged_summ_cost, global_step=self.step)
+
+        self.step += 1
+
         return cost_critic_loss, cost_action_grad_norm
 
+    def pretrain(self, z_batch, state_batch, action_batch):
+        train_feed_dict = {
+            self.z_input: z_batch,
+            self.state_input: state_batch,
+            self.action_input: action_batch
+        }
+        _, cost_critic_loss = self.sess.run([self.optimizer, self.cost_cost], train_feed_dict)
+        return cost_critic_loss
+
     def gradients(self, state_batch, action_batch):
-        return self.sess.run(self.action_gradients, feed_dict={
+        return self.sess.run(self.action_gradients_cost, feed_dict={
             self.state_input: state_batch,
             self.action_input: action_batch
         })[0]

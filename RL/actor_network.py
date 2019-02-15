@@ -6,33 +6,35 @@ import math
 LAYER1_SIZE = 256
 LAYER2_SIZE = 256
 LAYER3_SIZE = 128
-LEARNING_RATE = 0.001
+LEARNING_RATE = 0.0001
 TAU = 0.001
 
 
-def weight_variable(shape):
+def weight_variable(shape, name):
     initial = tf.truncated_normal(shape, stddev=0.01)
-    return tf.Variable(initial)
+    return tf.Variable(initial, name)
 
 
-def bias_variable(shape):
+def bias_variable(shape, name):
     initial = tf.constant(0.03, shape=shape)
-    return tf.Variable(initial)
+    return tf.Variable(initial, name)
 
 
 class ActorNetwork(object):
     """ Map: state + limit_load -> action """
 
-    def __init__(self, sess, input_config, load_model):
+    def __init__(self, sess, input_config, load_model, summ_writer):
         self.sess = sess
         self.state_dim = input_config.state_dim
         self.action_dim = input_config.action_dim
         self.save_iter = input_config.save_iter  # interval of saving log
-        self.save_path = input_config.model_save_path  # interval of saving model
+        self.save_path = input_config.model_save_path + "/actor"  # interval of saving model
         self.log_iter = input_config.log_iter  # logging interval in training phase
-        self.log_path = input_config.log_path + '/actor'  # log path
+        self.log_path = input_config.log_path  # log path
         self.clip_norm = input_config.clip_norm
         self.step = 0
+
+        self.train_writer = summ_writer
 
         # create actor network
         self.state_input, self.action_output, self.net = self.create_network(self.state_dim, self.action_dim)
@@ -41,7 +43,6 @@ class ActorNetwork(object):
             self.state_dim, self.action_dim, self.net)
         self.create_training_method()
 
-        self.train_writer = tf.summary.FileWriter(self.log_path)
         self.saver = tf.train.Saver()
         # self.saver = tf.train.Saver(tf.global_variables(scope=scope))
         if load_model:
@@ -53,6 +54,7 @@ class ActorNetwork(object):
 
         self.update_target()
 
+
     def create_training_method(self):
         self.q_gradient_input = tf.placeholder("float", [None, self.action_dim])
         self.unnormalized_actor_gradients = tf.gradients(self.action_output, self.net, -self.q_gradient_input)
@@ -60,10 +62,13 @@ class ActorNetwork(object):
         # gradients clip
         # self.actor_gradients, _ = tf.clip_by_global_norm(self.actor_gradients, clip_norm=self.clip_norm)
 
-        extra_ops = tf.get_collection('actor_parameters_extra_option')
-        apply_op = tf.train.AdamOptimizer(LEARNING_RATE).apply_gradients(zip(self.unnormalized_actor_gradients, self.net))
-        train_ops = [apply_op] + extra_ops
-        self.optimizer = tf.group(*train_ops)
+        # extra_ops = tf.get_collection('actor_parameters_extra_option')
+        # apply_op = tf.train.AdamOptimizer(LEARNING_RATE).apply_gradients(zip(self.unnormalized_actor_gradients, self.net))
+        apply_op = tf.train.RMSPropOptimizer(LEARNING_RATE).apply_gradients(zip(self.unnormalized_actor_gradients, self.net))
+
+        # train_ops = [apply_op] + extra_ops
+        # self.optimizer = tf.group(*apply_op)
+        self.optimizer = apply_op
 
         diff = self.action_output - self.target_action_output
         self.mse = tf.reduce_mean(tf.square(diff))
@@ -72,57 +77,80 @@ class ActorNetwork(object):
             zip(pretrain_grad, self.net))
 
 
+
+    def create_network(self, state_dim, action_dim):
+        layer1_size = LAYER1_SIZE
+        layer2_size = LAYER2_SIZE
+
+        state_input = tf.placeholder("float", [None, state_dim])
+
+        w1 = self.variable([state_dim, layer1_size], state_dim)
+        b1 = self.variable([layer1_size], state_dim)
+        w2 = self.variable([layer1_size, layer2_size], layer1_size)
+        b2 = self.variable([layer2_size], layer1_size)
+        w3 = tf.Variable(tf.random_uniform([layer2_size, action_dim], -3e-3, 3e-3))
+        b3 = tf.Variable(tf.random_uniform([action_dim], -3e-3, 3e-3))
+
+        layer1 = tf.nn.relu(tf.matmul(state_input, w1) + b1)
+        layer2 = tf.nn.relu(tf.matmul(layer1, w2) + b2)
+        action_output = tf.sigmoid(tf.matmul(layer2, w3) + b3)
+        out_summ = tf.summary.histogram('action_output', action_output)
+
+        w1_summ = tf.summary.histogram('W1', values=w1)
+        b1_summ = tf.summary.histogram('b1', values=b1)
+
+        w2_summ = tf.summary.histogram('W2', values=w2)
+        b2_summ = tf.summary.histogram('b2', values=b2)
+
+        w3_summ = tf.summary.histogram('W3', values=w3)
+        b3_summ = tf.summary.histogram('b3', values=b3)
+
+        self.merged_summ = tf.summary.merge([out_summ, w1_summ, b1_summ, w2_summ, b2_summ, w3_summ, b3_summ])
+        # self.merged_summ = tf.summary.merge([out_summ])
+
+        return state_input, action_output, [w1, b1, w2, b2, w3, b3]
+
     # def create_network(self, state_dim, action_dim):
     #     layer1_size = LAYER1_SIZE
     #     layer2_size = LAYER2_SIZE
     #
     #     state_input = tf.placeholder("float", [None, state_dim])
     #
-    #     W1 = self.variable([state_dim, layer1_size], state_dim)
-    #     b1 = self.variable([layer1_size], state_dim)
-    #     W2 = self.variable([layer1_size, layer2_size], layer1_size)
-    #     b2 = self.variable([layer2_size], layer1_size)
-    #     W3 = tf.Variable(tf.random_uniform([layer2_size, action_dim], -3e-3, 3e-3))
-    #     b3 = tf.Variable(tf.random_uniform([action_dim], -3e-3, 3e-3))
+    #     # Input -> Hidden Layer
+    #     w1 = weight_variable([self.state_dim, layer1_size], 'W1')
+    #     b1 = bias_variable([layer1_size], 'b1')
+    #     # Hidden Layer -> Hidden Layer
+    #     w2 = weight_variable([layer1_size, layer2_size], 'W2')
+    #     b2 = bias_variable([layer2_size], 'b2')
+    #     # Hidden Layer -> Output
+    #     w3 = weight_variable([layer2_size, self.action_dim], 'W3')
+    #     b3 = bias_variable([self.action_dim], 'b3')
     #
-    #     layer1 = tf.nn.relu(tf.matmul(state_input, W1) + b1)
-    #     layer2 = tf.nn.relu(tf.matmul(layer1, W2) + b2)
-    #     action_output = tf.tanh(tf.matmul(layer2, W3) + b3)
+    #     # 1st Hidden layer, OPTION: Softmax, relu, tanh or sigmoid
+    #     h1 = tf.nn.relu(tf.matmul(state_input, w1) + b1)
+    #     # 2nd Hidden layer, OPTION: Softmax, relu, tanh or sigmoid
+    #     h2 = tf.nn.relu(tf.matmul(h1, w2) + b2)
     #
-    #     return state_input, action_output, [W1, b1, W2, b2, W3, b3]
+    #     # Run sigmoid on output to get 0 to 1
+    #     action_output = tf.nn.sigmoid(tf.matmul(h2, w3) + b3)
+    #     out_summ = tf.summary.histogram('action_output', action_output)
+    #
+    #     w1_summ = tf.summary.histogram('W1', values=w1)
+    #     b1_summ = tf.summary.histogram('b1', values=b1)
+    #
+    #     w2_summ = tf.summary.histogram('W2', values=w2)
+    #     b2_summ = tf.summary.histogram('b2', values=b2)
+    #
+    #     w3_summ = tf.summary.histogram('W3', values=w3)
+    #     b3_summ = tf.summary.histogram('b3', values=b3)
+    #
+    #     self.merged_summ = tf.summary.merge([out_summ, w1_summ, b1_summ, w2_summ, b2_summ, w3_summ, b3_summ])
+    #     # self.merged_summ = tf.summary.merge([out_summ])
+    #
+    #     # scaled_out = tf.multiply(out, self.action_bound)  # Scale output to -action_bound to action_bound
+    #
+    #     return state_input, action_output, [w1, b1, w2, b2, w3, b3]
 
-    def create_network(self, state_dim, action_dim):
-        layer1_size = LAYER1_SIZE
-        layer2_size = LAYER2_SIZE
-        layer3_size = LAYER3_SIZE
-
-        state_input = tf.placeholder("float", [None, state_dim])
-
-        # Input -> Hidden Layer
-        w1 = weight_variable([self.state_dim, layer1_size])
-        b1 = bias_variable([layer1_size])
-        # Hidden Layer -> Hidden Layer
-        w2 = weight_variable([layer1_size, layer2_size])
-        b2 = bias_variable([layer2_size])
-        # Hidden Layer -> Hidden Layer
-        w3 = weight_variable([layer2_size, layer3_size])
-        b3 = bias_variable([layer3_size])
-        # Hidden Layer -> Output
-        w4 = weight_variable([layer3_size, self.action_dim])
-        b4 = bias_variable([self.action_dim])
-
-        # 1st Hidden layer, OPTION: Softmax, relu, tanh or sigmoid
-        h1 = tf.nn.relu(tf.matmul(state_input, w1) + b1)
-        # 2nd Hidden layer, OPTION: Softmax, relu, tanh or sigmoid
-        h2 = tf.nn.relu(tf.matmul(h1, w2) + b2)
-        h3 = tf.nn.relu(tf.matmul(h2, w3) + b3)
-
-
-        # Run sigmoid on output to get 0 to 1
-        action_output = tf.nn.sigmoid(tf.matmul(h3, w4) + b4)
-
-        # scaled_out = tf.multiply(out, self.action_bound)  # Scale output to -action_bound to action_bound
-        return state_input, action_output, [w1, b1, w2, b2, w3, b3, w4, b4]
 
     def create_target_network(self, state_dim, action_dim, net):
         state_input = tf.placeholder("float", [None, state_dim])
@@ -132,9 +160,8 @@ class ActorNetwork(object):
 
         layer1 = tf.nn.relu(tf.matmul(state_input, target_net[0]) + target_net[1])
         layer2 = tf.nn.relu(tf.matmul(layer1, target_net[2]) + target_net[3])
-        layer3 = tf.nn.relu(tf.matmul(layer2, target_net[4]) + target_net[5])
 
-        action_output = tf.tanh(tf.matmul(layer3, target_net[6]) + target_net[7])
+        action_output = tf.tanh(tf.matmul(layer2, target_net[4]) + target_net[5])
 
         return state_input, action_output, target_update, target_net
 
@@ -146,14 +173,15 @@ class ActorNetwork(object):
             self.q_gradient_input: q_gradient_batch,
             self.state_input: state_batch
         }
-        self.sess.run(self.optimizer, feed_dict=train_feed_dict)
+        summ, _ = self.sess.run([self.merged_summ, self.optimizer], feed_dict=train_feed_dict)
+        # _ = self.sess.run([self.optimizer], feed_dict=train_feed_dict)
+
         # save actor network
         if self.step % self.save_iter == 0:
             self.saver.save(self.sess, save_path=self.save_path, global_step=self.step)
 
-        # if self.step % self.log_iter == 0:
-        #     summary = self.sess.run(self.merged, feed_dict=train_feed_dict)
-        #     self.train_writer.add_summary(summary, global_step=self.step)
+        if self.step % self.log_iter == 0:
+            self.train_writer.add_summary(summ, global_step=self.step)
 
         self.step += 1
 

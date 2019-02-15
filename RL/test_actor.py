@@ -10,35 +10,6 @@ import pandas as pd
 import numpy as np
 
 
-# Hyper Parameters
-LAYER1_SIZE = 256
-LAYER2_SIZE = 256
-LEARNING_RATE = 0.001
-TAU = 0.001
-
-
-def weight_variable(shape):
-    initial = tf.truncated_normal(shape, stddev=0.01)
-    return tf.Variable(initial)
-
-
-def bias_variable(shape):
-    initial = tf.constant(0.03, shape=shape)
-    return tf.Variable(initial)
-
-
-def load_network(self):
-    self.saver = tf.train.Saver()
-    checkpoint = tf.train.get_checkpoint_state("saved_actor_networks_np")
-    if checkpoint and checkpoint.model_checkpoint_path:
-        self.saver.restore(self.sess, checkpoint.model_checkpoint_path)
-        print("Successfully loaded:", checkpoint.model_checkpoint_path)
-    else:
-        print("Could not find old network weights")
-
-
-summary_writer = tf.summary.FileWriter("result/test_actor")
-
 config = tf.ConfigProto(allow_soft_placement=True, log_device_placement=False)
 config.gpu_options.allow_growth = True
 
@@ -51,7 +22,7 @@ actor_sess = tf.Session(config=config, graph=actor_graph)
 with actor_graph.as_default():
     agent = PrimalDualDDPG(sess=actor_sess, input_config=input_config, is_batch_norm=False, load_model=False)
     actor_saver = tf.train.Saver()
-    checkpoint = tf.train.get_checkpoint_state("./model")
+    checkpoint = tf.train.get_checkpoint_state("./models")
     if checkpoint and checkpoint.model_checkpoint_path:
         actor_saver.restore(actor_sess, checkpoint.model_checkpoint_path)
         print("Successfully loaded:", checkpoint.model_checkpoint_path)
@@ -85,7 +56,7 @@ df_action_data = pd.DataFrame(columns=file_test.columns[58:109])
 df_next_state_opt = pd.DataFrame(columns=file_test.columns[11:58])
 df_action_opt = pd.DataFrame(columns=file_test.columns[58:109])
 
-for i in range(10, (len(file_test)-1)//30):
+for i in range(10, (len(file_test)-1)//10):
     previous_states = file_test.ix[i-9:i, :]
     state = file_test.ix[i, '分析基水份%':'1号机组下部水冷壁出口平均壁温']
     limit_load = file_test.ix[i, 'lim_load']
@@ -111,7 +82,7 @@ for i in range(10, (len(file_test)-1)//30):
     df_action_opt.loc[i-10] = action_opt
     print(i)
 
-df_state_data.to_csv('result/test_result_state_data.csv')
-df_action_data.to_csv('result/test_result_action_data.csv')
-df_next_state_opt.to_csv('result/test_result_next_state_opt.csv')
-df_action_opt.to_csv('result/test_result_action_opt.csv')
+df_state_data.to_csv('results/test_actor/test_result_state_data.csv')
+df_action_data.to_csv('results/test_actor/test_result_action_data.csv')
+df_next_state_opt.to_csv('results/test_actor/test_result_next_state_opt.csv')
+df_action_opt.to_csv('results/test_actor/test_result_action_opt.csv')

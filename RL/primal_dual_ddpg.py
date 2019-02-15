@@ -12,9 +12,9 @@ from RL.util import *
 # EPSILON定义一个极小值
 EPSILON = 1e-5
 # Hyper Parameters:
-REPLAY_MEMORY_SIZE = 3e5
-REPLAY_START_SIZE = 3000
-GAMMA = 0.95
+REPLAY_MEMORY_SIZE = 10000
+REPLAY_START_SIZE = 1000
+GAMMA = 0.9
 COST_EPSILON = 1
 DUAL_STEP_SIZE = 0.01
 is_grad_inverter = False
@@ -23,15 +23,15 @@ is_grad_inverter = False
 class PrimalDualDDPG(object):
     """ Primal Dual Deep Deterministic Policy Gradient Algorithm"""
 
-    def __init__(self, sess, input_config, is_batch_norm, load_model=False):
+    def __init__(self, sess, input_config, is_batch_norm, summ_writer=None, load_model=False):
         self.state_dim = input_config.state_dim
         self.action_dim = input_config.action_dim
         self.dual_lambda = input_config.init_dual_lambda
         self.save_path = input_config.model_save_path
         self.train_display_iter = input_config.train_display_iter
-        self.logfile = open(os.path.join('result', 'run_log.log'), 'w')
         self.batch_size = input_config.batch_size
         self.gamma = GAMMA
+        self.summay_writer = summ_writer
 
         self.sess = sess
         self.step = 0
@@ -43,9 +43,9 @@ class PrimalDualDDPG(object):
             self.actor_network = ActorNetwork_bn(self.sess, self.state_dim, self.action_dim)
 
         else:
-            self.reward_critic_network = RewardCriticNetwork(self.sess, input_config)
-            self.cost_critic_network = CostCriticNetwork(self.sess, input_config)
-            self.actor_network = ActorNetwork(self.sess, input_config, load_model=False)
+            self.reward_critic_network = RewardCriticNetwork(self.sess, input_config, self.summay_writer)
+            self.cost_critic_network = CostCriticNetwork(self.sess, input_config, self.summay_writer)
+            self.actor_network = ActorNetwork(self.sess, input_config, load_model=False, summ_writer=self.summay_writer)
 
         # initialize replay buffer
         self.replay_buffer = ReplayBuffer(REPLAY_MEMORY_SIZE)
@@ -53,9 +53,9 @@ class PrimalDualDDPG(object):
         # Initialize a random process the Ornstein-Uhlenbeck process for action exploration
         self.exploration_noise = OUNoise(self.action_dim)
 
-        for name in input_config.__dict__:
-            if isinstance(input_config.__dict__[name], int) or isinstance(input_config.__dict__[name], float):
-                self.log(f'parameter|input_config_{name}:{input_config.__dict__[name]}')
+        # for name in input_config.__dict__:
+        #     if isinstance(input_config.__dict__[name], int) or isinstance(input_config.__dict__[name], float):
+        #         self.log(f'parameter|input_config_{name}:{input_config.__dict__[name]}')
 
         # model saver
         self.saver = tf.train.Saver()
@@ -63,12 +63,12 @@ class PrimalDualDDPG(object):
             self.saver.restore(sess=self.sess, save_path=tf.train.latest_checkpoint(self.save_path))
 
 
-    def __del__(self):
-        self.logfile.close()
-
-    def log(self, *args):
-        self.logfile.write(*args)
-        self.logfile.write('\n')
+    # def __del__(self):
+    #     self.logfile.close()
+    #
+    # def log(self, *args):
+    #     self.logfile.write(*args)
+    #     self.logfile.write('\n')
 
     def train(self):
         # print "train step", self.time_step
@@ -110,6 +110,7 @@ class PrimalDualDDPG(object):
             action_batch_for_gradients = self.grad_inv.invert(action_batch_for_gradients, )
         else:
             action_batch_for_gradients = self.actor_network.actions(state_batch)
+        print('action_batch_for_gradients', action_batch_for_gradients)
         reward_gradient_batch = self.reward_critic_network.gradients(state_batch, action_batch_for_gradients)
         cost_gradient_batch = self.cost_critic_network.gradients(state_batch, action_batch_for_gradients)
         q_gradient_batch = reward_gradient_batch - self.dual_lambda * cost_gradient_batch
@@ -124,14 +125,12 @@ class PrimalDualDDPG(object):
 
         if self.step % self.train_display_iter == 0:
             print("reward_critic: loss:{:.3f} action_grads_norm:{:.3f} "
-                  "| cost_critic: loss:{:.3f} action_grads_norm:{:.3f}".format(
+                  "| cost_critic: loss:{:.3f} action_grads_norm:{:.3f}"
+                  "| q_gradient:{:.3f}".format(
                 reward_critic_loss, np.mean(reward_action_grad_norm),
-                cost_critic_loss, np.mean(cost_action_grad_norm)))
+                cost_critic_loss, np.mean(cost_action_grad_norm), np.mean(q_gradient_batch)))
             print("Dual lambda: {}".format(self.dual_lambda))
 
-        self.log(f'reward_critic|loss:{reward_critic_loss},action_gradient_norm:{np.mean(reward_action_grad_norm)}')
-        self.log(f'cost_critic|loss:{cost_critic_loss},action_gradient_norm:{np.mean(cost_action_grad_norm)}')
-        self.log(f'Dual_lambda|value:{self.dual_lambda}')
 
         # Update the target networks
         self.reward_critic_network.update_target()
