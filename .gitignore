@@ -1,11 +1,13 @@
 .idea/
 Material/
 BoilerData/
+.DS_Store
 
 Simulator/__pycache__/
 Simulator/.idea/
 Simulator/data/
 Simulator/logs/
+Simulator/.DS_Store
 
 
 RL/__pycache__/
@@ -14,5 +16,5 @@ RL/model/
 RL/saved_actor/
 RL/result/
 RL/logs/
-
+RL/.DS_Store
 
